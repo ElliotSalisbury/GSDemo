@@ -56,13 +56,14 @@ public class Listen extends AsyncTask<Double, Integer, Long> {
 
     private ConnectionFactory factory = new ConnectionFactory();
 
-    private String uri;
-    private String queueName;
-    private String droneID;
+    private String uri = null;
+    private String queueName = null;
+    private String droneID = null;
     private String currentMissionID = null;
+    private boolean connected = false;
     //private TextView txtView;
 
-    private String mRegisterAddress = "http://10.9.135.79:8000";
+    private String mRegisterAddress = "http://10.9.134.203:8000";
     private Activity mActivity;
     private DJICustomMission mCustomMission;
     private DJIFlightController mFlightController;
@@ -71,6 +72,7 @@ public class Listen extends AsyncTask<Double, Integer, Long> {
 
     public Listen(Activity activity) {
         this.mActivity = activity;
+        this.scheduleDataTransmission();
     }
 
     @Override
@@ -79,32 +81,8 @@ public class Listen extends AsyncTask<Double, Integer, Long> {
 
     @Override
     protected Long doInBackground(Double... coordinates) {
-        try {
             this.registerWithServer(coordinates);
             this.declareMissionConsumer();
-
-        } catch (MalformedURLException e) {
-            showErrorMessage("MalformedURLException");
-            e.printStackTrace();
-        } catch (ProtocolException e) {
-            showErrorMessage("ProtocolException");
-            e.printStackTrace();
-        } catch (IOException e) {
-            showErrorMessage("IOException");
-            e.printStackTrace();
-        } catch (NoSuchAlgorithmException e) {
-            showErrorMessage("NoSuchAlgorithmException");
-            e.printStackTrace();
-        } catch (URISyntaxException e) {
-            showErrorMessage("URISyntaxException");
-            e.printStackTrace();
-        } catch (TimeoutException e) {
-            showErrorMessage("TimeoutException");
-            e.printStackTrace();
-        } catch (KeyManagementException e) {
-            showErrorMessage("KeyManagementException");
-            e.printStackTrace();
-        }
         return null;
     }
 
@@ -153,7 +131,7 @@ public class Listen extends AsyncTask<Double, Integer, Long> {
         }));
         djiMissionSteps.add(new DJIGoToStep(currentMissionLat, currentMissionLon, 2f, new DJIBaseComponent.DJICompletionCallback() {
             @Override
-            public void onResult(DJIError djiError) {
+                public void onResult(DJIError djiError) {
 
             }
         }));
@@ -163,19 +141,19 @@ public class Listen extends AsyncTask<Double, Integer, Long> {
             mMissionManager.prepareMission(mCustomMission, new DJIMission.DJIMissionProgressHandler() {
                 @Override
                 public void onProgress(DJIMission.DJIProgressType djiProgressType, float v) {
-
+                    sendProgress(djiProgressType, v);
                 }
             }, new DJIBaseComponent.DJICompletionCallback() {
 
                 @Override
                 public void onResult(DJIError djiError) {
-
+                    sendDJIError(djiError);
                 }
             });
             mMissionManager.startMissionExecution(new DJIBaseComponent.DJICompletionCallback() {
                 @Override
-                public void onResult(DJIError djiError) {
-
+                    public void onResult(DJIError djiError) {
+                    sendDJIError(djiError);
                 }
             });
         }
@@ -196,54 +174,169 @@ public class Listen extends AsyncTask<Double, Integer, Long> {
         });
     }
 
-    private void registerWithServer(Double... coordinates) throws IOException, NoSuchAlgorithmException, KeyManagementException, URISyntaxException {
+    private void registerWithServer(Double... coordinates) {
 
-        StringBuilder response = new StringBuilder();
+        try {
+            StringBuilder response = new StringBuilder();
 
-        URL url = new URL(mRegisterAddress + "/register");
+            URL url = new URL //("http://stackoverflow.com");
+                    (mRegisterAddress + "/register");
 
-        HttpURLConnection httpURLConnection = (HttpURLConnection) url.openConnection();
+            HttpURLConnection httpURLConnection = (HttpURLConnection) url.openConnection();
 
-        httpURLConnection.setDoOutput(true);
-        httpURLConnection.setRequestMethod("POST");
-        httpURLConnection.setRequestProperty("Content-Type", "application/json");
-        httpURLConnection.setRequestProperty("Accept", "application/json");
+            httpURLConnection.setDoOutput(true);
+            httpURLConnection.setRequestMethod("POST");
+            httpURLConnection.setRequestProperty("Content-Type", "application/json");
+            httpURLConnection.setRequestProperty("Accept", "application/json");
 
-        JsonObject toBeSent = new JsonObject();
+            JsonObject toBeSent = new JsonObject();
 
-        toBeSent.addProperty("lat", coordinates[0]);
-        toBeSent.addProperty("lon", coordinates[1]);
+            toBeSent.addProperty("lat", coordinates[0]);
+            toBeSent.addProperty("lon", coordinates[1]);
+            Writer writer = new BufferedWriter(new OutputStreamWriter(httpURLConnection.getOutputStream()));
 
-        Writer writer = new BufferedWriter(new OutputStreamWriter(httpURLConnection.getOutputStream()));
+            writer.write(toBeSent.toString());
+            writer.close();
 
-        writer.write(toBeSent.toString());
-        writer.close();
-
-        if (httpURLConnection.getResponseCode() == HttpURLConnection.HTTP_OK) {
-            BufferedReader input = new BufferedReader(new InputStreamReader(httpURLConnection.getInputStream()));
-            String strLine = null;
-            while ((strLine = input.readLine()) != null) {
-                response.append(strLine);
+            if (httpURLConnection.getResponseCode() == HttpURLConnection.HTTP_OK) {
+                BufferedReader input = new BufferedReader(new InputStreamReader(httpURLConnection.getInputStream()));
+                String strLine = null;
+                while ((strLine = input.readLine()) != null) {
+                    response.append(strLine);
+                }
+                input.close();
             }
-            input.close();
-        }
 
-        this.processInitialSettingsJSON(response.toString());
-        factory.setUri(uri);
+            this.processInitialSettingsJSON(response.toString());
+            factory.setUri(uri);
+            connected = true;
+        } catch (MalformedURLException e) {
+            showErrorMessage("Register with Server : MalformedURLException");
+            e.printStackTrace();
+        } catch (ProtocolException e) {
+            showErrorMessage("Register with Server : ProtocolException");
+            e.printStackTrace();
+        } catch (NoSuchAlgorithmException e) {
+            showErrorMessage("Register with Server : NoSuchAlgorithmException");
+            e.printStackTrace();
+        } catch (URISyntaxException e) {
+            showErrorMessage("Register with Server : URISyntaxException");
+            e.printStackTrace();
+        }  catch (KeyManagementException e) {
+            showErrorMessage("Register with Server : KeyManagementException");
+            e.printStackTrace();
+        } catch (IOException e) {
+            showErrorMessage("Register with Server : IOException");
+            e.printStackTrace();
+        }
     }
 
-    private void declareMissionConsumer() throws IOException, TimeoutException {
-        Connection connection = factory.newConnection();
-        Channel channel = connection.createChannel();
+    private void declareMissionConsumer(){
+        try {
+            Connection connection = factory.newConnection();
+            Channel channel = connection.createChannel();
 
-        channel.queueDeclare(queueName, false, false, false, null);
-        Consumer consumer = new DefaultConsumer(channel) {
-            @Override
-            public void handleDelivery(String consumerTag, Envelope envelope, AMQP.BasicProperties properties, byte[] body) throws IOException {
-                processMissionsJSON(new String(body, "UTF-8"));
-            }
-        };
-        channel.basicConsume(queueName, true, consumer);
+            channel.queueDeclare(queueName, false, false, false, null);
+            Consumer consumer = new DefaultConsumer(channel) {
+                @Override
+                public void handleDelivery(String consumerTag, Envelope envelope, AMQP.BasicProperties properties, byte[] body) throws IOException {
+                    processMissionsJSON(new String(body, "UTF-8"));
+                }
+            };
+            channel.basicConsume(queueName, true, consumer);
+        } catch (TimeoutException e) {
+            showErrorMessage("Consumer declaration : TimeoutException");
+            e.printStackTrace();
+        } catch (IOException e) {
+            showErrorMessage("Consumer declaration : IOException");
+            e.printStackTrace();
+        }
+    }
+
+    private void sendProgress(DJIMission.DJIProgressType djiProgressType, float v){
+        try {
+            JSONObject data = new JSONObject();
+            JSONObject progress = new JSONObject();
+
+            data.put("ID", droneID);
+            data.put("MissionID", currentMissionID);
+            data.put("Content", "Progress");
+
+            progress.put("DJIProgressType", djiProgressType.toString());
+            progress.put("Value", v);
+
+            data.put("Progress", progress);
+
+            sendDroneData(data.toString());
+        } catch (JSONException e) {
+            e.printStackTrace();
+            showErrorMessage("Sending progress : JSONException");
+        } catch (Exception e) {
+            e.printStackTrace();
+            showErrorMessage("Sending progress : Exception");
+        }
+    }
+
+    private void sendDJIError(DJIError djiError){
+        try {
+            JSONObject data = new JSONObject();
+
+            data.put("ID", droneID);
+            data.put("MissionID", currentMissionID);
+            data.put("Content", "DJIError");
+            data.put("DJIError", djiError.getDescription());
+
+            sendDroneData(data.toString());
+        } catch (JSONException e) {
+            e.printStackTrace();
+            showErrorMessage("Sending report : JSONException");
+        } catch (Exception e) {
+            e.printStackTrace();
+            showErrorMessage("Sending report : Exception");
+        }
+    }
+
+    private void sendDroneData(String json){
+        Connection connection = null;
+        Channel channel = null;
+        try {
+            connection = factory.newConnection();
+            channel = connection.createChannel();
+            channel.basicPublish("", "Meta_Drone_Data", null, json.getBytes());
+            channel.close();
+            connection.close();
+        } catch (IOException e) {
+            e.printStackTrace();
+            showErrorMessage("Sending data : IOException");
+        } catch (TimeoutException e) {
+            e.printStackTrace();
+            showErrorMessage("Sending data : TimeoutException");
+        } catch (Exception e) {
+            e.printStackTrace();
+            showErrorMessage("Sending data : Exception");
+        }
+    }
+
+    private void sendCoordinates(){
+        try {
+            JSONObject data = new JSONObject();
+            DJIFlightControllerDataType.DJILocationCoordinate3D coordinate3D =
+                    ((mFlightController==null)? ((DJIAircraft) DJIDemoApplication.getProductInstance()).getFlightController() :mFlightController).getCurrentState().getAircraftLocation();
+
+            data.put("ID", droneID);
+            data.put("MissionID", currentMissionID);
+            data.put("Content", "Coordinates");
+            data.put("Coordinates", new Coordinates(coordinate3D.getLatitude(), coordinate3D.getLongitude(), coordinate3D.getAltitude()).toJSONObject());
+
+            sendDroneData(data.toString());
+        } catch (JSONException e) {
+            e.printStackTrace();
+            showErrorMessage("Sending coordinate : JSONException");
+        } catch (Exception e) {
+            e.printStackTrace();
+            showErrorMessage(e.getMessage());
+            showErrorMessage("Sending coordinate : Exception");
+        }
     }
 
     private void scheduleDataTransmission() {
@@ -251,37 +344,10 @@ public class Listen extends AsyncTask<Double, Integer, Long> {
         timer.scheduleAtFixedRate(new TimerTask() {
             @Override
             public void run() {
-                Connection connection = null;
-                Channel channel = null;
-                try {
-                    JSONObject data = new JSONObject();
-                    DJIFlightControllerDataType.DJILocationCoordinate3D coordinate3D = mFlightController.getCurrentState().getAircraftLocation();
-
-                    data.put("ID", droneID);
-                    data.put("MissionID", currentMissionID);
-                    data.put("Coordinates", new Coordinates(coordinate3D.getLatitude(), coordinate3D.getLongitude(), coordinate3D.getAltitude()).toJSONObject());
-
-                    connection = factory.newConnection();
-                    channel = connection.createChannel();
-                    channel.basicPublish("", "Meta_Drone_Data", null, data.toString().getBytes());
-
-                    channel.close();
-                    connection.close();
-
-                } catch (IOException e) {
-                    e.printStackTrace();
-                    showErrorMessage("IOException");
-                } catch (TimeoutException e) {
-                    e.printStackTrace();
-                    showErrorMessage("TimeoutException");
-                } catch (JSONException e) {
-                    e.printStackTrace();
-                    showErrorMessage("JSONException");
-                } catch (Exception e) {
-                    e.printStackTrace();
-                    showErrorMessage("Exception");
+                if(connected) {
+                    sendCoordinates();
                 }
             }
-        }, 0, 100);
+        }, 0, 1000);
     }
 }
